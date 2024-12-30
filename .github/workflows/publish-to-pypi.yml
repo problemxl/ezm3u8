@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/ezm3u8
+      url: https://pypi.org/p/ezM3U8
     permissions:
       id-token: write  # IMPORTANT: mandatory for trusted publishing
 
