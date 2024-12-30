@@ -1,14 +1,19 @@
 import os
 import re
+from collections import defaultdict
+
+
 from ezm3u8.channel import Channel
 from ezm3u8.movie import Movie
 from ezm3u8.tvshow import TVShow
 
 import requests
 
-movie_pattern = re.compile(r'(?P<network>.+) \((?P<title>\d{4})\) \((?P<year>\d{4})\)')
-tv_pattern = re.compile(r'(?P<network>[^-]+) - (?P<title>.+) \((?P<year>\d{4})\) \((?P<country>[A-Z]{2})\) S(?P<season>\d{2}) E(?P<episode>\d{2})')
-regular_channel_pattern = re.compile(r'(?P<COUNTRY>[A-Z]{2}) - (?P<TITLE>.+)')
+movie_pattern = re.compile(r'(?P<network>.+?)\s*-\s*(?:(?P<id>\d+)\.\s*)?(?P<title>.+?)(?:\s*\((?P<year>\d{4})\))?$')
+tv_pattern = re.compile(r'((?P<network>[^-]+)\s*-)?\s*(?P<title>.+) (\((?P<country>[A-Z]{2})\) )?S(?P<season>\d{2}) E(?P<episode>\d{2})')
+regular_channel_pattern = re.compile(r'(?P<COUNTRY>.+?)\s*[-:]\s*(?P<TITLE>.+)')
+# Check if string contains PPV or event
+ppv_pattern = re.compile(r'PPV|Event|PPV Event|Pay-Per-View|PPV - | v |vs')
 
 class m3u8:
     
@@ -27,9 +32,13 @@ class m3u8:
         
         self.filepath = filepath
         self.url = url
-        self.channels: list[Channel] = []
-        self.movies: list[Movie] = []
-        self.tv_shows: list[TVShow] = []
+        self.playlist = None
+        self.channels: dict[str, Channel] = {}
+        self.tv_show_dict: dict[str, TVShow] = {}
+        self.movies_dict: dict[str, Movie] = {}
+        self.ppv_dict: dict[str, Channel] = {}
+        self._parse_m3u8()
+        print("Finished parsing M3U8 file")
     
     def _parse_m3u8(self):
         '''The function `_parse_m3u8` reads or downloads the M3U8 file and extracts the channel, movie, and TV show information.
@@ -45,25 +54,41 @@ class m3u8:
             r = requests.get(self.url)
             lines = r.text.split('\n')
             self.playlist = r.text
+            with open('playlist.m3u8', 'w') as f:
+                f.write(r.text)
             
-        for line in lines:
+        for i in range(len(lines)):
+            line = lines[i]
             if line.startswith("#EXTINF:"):
-                tvg_id = line.split("tvg-id=\"")[1].split("\"")[0]
+                # Extract information using a single split operation
+                # tvg_id = line.split("tvg-id=\"")[1].split("\"")[0]
                 tvg_name = line.split("tvg-name=\"")[1].split("\"")[0]
-                tvg_logo = line.split("tvg-logo=\"")[1].split("\"")[0]
+                # tvg_logo = line.split("tvg-logo=\"")[1].split("\"")[0]
                 group_title = line.split("group-title=\"")[1].split("\"")[0]
-                name = line.split(",")[1]
-                url = lines[lines.index(line) + 1]
-                print(tvg_id, tvg_name, tvg_logo, group_title, name, url)
-                if match := re.match(movie_pattern, tvg_name):
-                    self.movies.append(Movie(match['title'], match['year'], match['network'], url))
-                if match := re.match(tv_pattern, tvg_name):
-                    if not any(tv.title == match['title'] for tv in self.tv_shows):
-                        self.tv_shows.append(TVShow(match['title'], match['network'], match['year'], match['country']))
-                    tv_show = next(tv for tv in self.tv_shows if tv.title == match['title'])
-                    tv_show.add_episode(int(match['season']), int(match['episode']), url)
-                if match := re.match(regular_channel_pattern, tvg_name):
-                    self.channels.append(Channel(match['TITLE'], match['COUNTRY'], url))
+                # name = line.split(",")[1]
+                url = lines[i + 1].strip()
+
+                if ppv_pattern.search(tvg_name):
+                    self.ppv_dict[tvg_name] = Channel(tvg_name, "PPV", url)
+                elif match := movie_pattern.match(tvg_name):
+                    if has_extension(url):
+                        self.movies_dict[tvg_name] = Movie(match['title'], match['year'], match['network'], url)
+                elif match := tv_pattern.match(tvg_name):
+                    if has_extension(url):
+                        title = match['title']
+                        if title not in self.tv_show_dict:
+                            tv_show = TVShow(title, match['network'], country=match['country'])                        
+                            self.tv_show_dict[title] = tv_show
+                    self.tv_show_dict[title].add_episode(int(match['season']), int(match['episode']), url)
+                elif match := regular_channel_pattern.match(tvg_name):
+                    # print(f"Matched {tvg_name}")
+                    # print(group_title)
+                    if "UK" in group_title:
+                        self.channels[tvg_name] = Channel(match['TITLE'], match['COUNTRY'], url)
+                else:
+                    print(f"Could not match {tvg_name}")
+            # if i % 1000 == 0:
+            #     print(f"Processed {i} lines")
     
     def to_strm(self):
         '''
@@ -79,11 +104,27 @@ class m3u8:
         for movie in self.movies:
             movie.to_strm(f"./strm/movies")
         
-    def to_m3u8(self):
+    def to_m3u8(self, filepath: str = './playlist.m3u8'):
         '''The function `to_m3u8` converts the Channels to an M3U8 playlist.
         
         '''
         m3u8 = "#EXTM3U\n"
-        for channel in self.channels:
+        for channel in self.channels.values():
             m3u8 += channel.to_m3u8() + "\n"
-        return m3u8
+        with open(filepath, 'w') as f:
+            f.write(m3u8)
+
+def has_extension(url) -> bool:
+    '''This function checks if a given URL has a file extension.
+    
+    Parameters
+    ----------
+    url
+        A URL string that you want to check for the presence of a file extension.
+    
+    Returns
+    -------
+    bool
+        A boolean value that indicates whether the URL has a file extension.
+    '''
+    return '.' in url.split('/')[-1]

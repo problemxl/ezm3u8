@@ -29,12 +29,12 @@ class Episode:
                 f.write(self.url)
 class TVShow:
 
-    def __init__(self, title, network, year, country):
+    def __init__(self, title, network, country, year=None):
         self.title = title
         self.network = network
-        self.year = year
         self.country = country
         self.seasons : dict[int, list[Episode]] = {}
+        self.year = year
         
     def add_episode(self, season, episode, url):
         if season not in self.seasons:
